@@ -1,0 +1,9 @@
+version = 1
+
+exclude_patterns = [
+  "Mod Manager/src/torchlight/**"
+]
+
+[[analyzers]]
+name = "javascript"
+enabled = true
