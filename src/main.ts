@@ -143,12 +143,12 @@ function toHuman(dur: Duration) {
 process.on("SIGINT", () => void core.logger.error("Received SIGINT signal"))
 process.on("SIGTERM", () => void core.logger.error("Received SIGTERM signal"))
 
-// async function doTheThing() {
-// 	if (typeof core.config.platform === "undefined") {
-// 		await core.logger.error(
-// 			"Could not detect a workable game copy! If the game has recently updated, the framework will also need an update. If you're using a cracked version, that sounds like a you problem."
-// 		)
-// 	}
+async function doTheThing() {
+	// if (typeof core.config.platform === "undefined") {
+	// 	await core.logger.error(
+	// 		"Could not detect a workable game copy! If the game has recently updated, the framework will also need an update. If you're using a cracked version, that sounds like a you problem."
+	// 	)
+	// }
 
 	const startedDate = DateTime.now()
 
