@@ -1,7 +1,9 @@
 version = 1
 
 exclude_patterns = [
-  "Mod Manager/src/torchlight/**"
+  "Mod Manager/src/torchlight/**",
+  "src/quickentity1136.js",
+  "src/quickentity20.js"
 ]
 
 [[analyzers]]

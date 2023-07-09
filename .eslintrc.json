@@ -34,7 +34,6 @@
         "@typescript-eslint/no-empty-function": "off",
         "@typescript-eslint/no-non-null-assertion": "off",
         "@typescript-eslint/no-floating-promises": "error",
-        "@typescript-eslint/no-misused-promises": "error",
-        "no-fallthrough": "off"
+        "@typescript-eslint/no-misused-promises": "error"
     }
 }

@@ -94,8 +94,7 @@
 
 	if (
 		window.fs
-			.readdirSync(window.path.join("..", "Mods"))
-			.filter((a) => a != "Managed by SMF, do not touch")
+			.readdirSync(window.path.join("..", "Mods")).filter(a=>a!="Managed by SMF, do not touch")
 			.map((a) => window.path.resolve(window.path.join("..", "Mods", a)))
 			.some((a) => window.isFile(a))
 	) {
@@ -108,8 +107,7 @@
 		} catch {
 			invalidModText =
 				window.fs
-					.readdirSync(window.path.join("..", "Mods"))
-					.filter((a) => a != "Managed by SMF, do not touch")
+					.readdirSync(window.path.join("..", "Mods")).filter(a=>a!="Managed by SMF, do not touch")
 					.map((a) => window.path.resolve(window.path.join("..", "Mods", a)))
 					.find((a) => window.fs.existsSync(window.path.join(a, "manifest.json")) && !json5.parse(window.fs.readFileSync(window.path.join(a, "manifest.json"), "utf8")).id)
 					?.split(window.path.sep)
@@ -406,24 +404,12 @@
 				throw new Error("Mod update ZIP has files in the root!")
 			}
 
-			if (
-				window.fs
-					.readdirSync("./staging")
-					.some(
-						(a) =>
-							json5.parse(window.fs.readFileSync(window.path.join("./staging", a, "manifest.json"), "utf8")).scripts ||
-							json5.parse(window.fs.readFileSync(window.path.join("./staging", a, "manifest.json"), "utf8")).options?.some((b) => b.scripts)
-					)
-			) {
-				updatingModScriptsWarningOpen = true
-			} else {
-				window.fs.removeSync(getModFolder(updatingMod!.id))
+			window.fs.removeSync(getModFolder(updatingMod!.id))
 
-				window.fs.copySync("./staging", "../Mods")
+			window.fs.copySync("./staging", "../Mods")
 
-				window.fs.removeSync("./staging")
-				window.fs.removeSync("./tempArchive")
-			}
+			window.fs.removeSync("./staging")
+			window.fs.removeSync("./tempArchive")
 		} catch (e) {
 			window.alert("Couldn't extract and apply the mod update! Contact the mod author for help.\n\n" + e)
 			updatingMod = null
@@ -434,8 +420,6 @@
 
 		window.location.reload()
 	}
-
-	let updatingModScriptsWarningOpen = false
 
 	const trustedHosts = new Set(["github.com", "raw.githubusercontent.com", "dropbox.com", "dl.dropboxusercontent.com", "drive.google.com", "hitman-resources.netlify.app"])
 </script>
@@ -472,8 +456,9 @@
 				{#if semver.lt(FrameworkVersion, release.tag_name)}
 					<div class="flex items-center">
 						<h3 class="flex-grow">
-							{{ patch: "Patch update available", minor: "Feature update available", major: "Major update available" }[semver.diff(FrameworkVersion, release.tag_name)] ||
-								"Update available"}
+							{{ patch: "Patch update available", minor: "Feature update available", major: "Major update available" }[
+								semver.diff(FrameworkVersion, release.tag_name)
+							] || "Update available"}
 						</h3>
 						<p>{FrameworkVersion} → {release.tag_name}</p>
 					</div>
@@ -529,13 +514,7 @@
 						</div>
 					</div>
 				{/each}
-				{#each updates.filter(([modID, update]) => update && (!(trustedHosts.has(new URL(update.check_url).hostname) || new URL(update.check_url).hostname
-								.split(".")
-								.slice(1)
-								.join(".") === "github.io") || !(trustedHosts.has(new URL(update.url).hostname) || new URL(update.url).hostname
-									.split(".")
-									.slice(1)
-									.join(".") === "github.io"))) as [modID, update]}
+				{#each updates.filter(([modID, update]) => update && (!(trustedHosts.has(new URL(update.check_url).hostname) || new URL(update.check_url).hostname.split(".").slice(1).join(".") === "github.io") || !(trustedHosts.has(new URL(update.url).hostname) || new URL(update.url).hostname.split(".").slice(1).join(".") === "github.io"))) as [modID, update]}
 					<div class="flex items-center">
 						<p class="flex-grow">The author of {getManifestFromModID(modID).name} may be able to find which IPs have their mod downloaded</p>
 						<Asterisk />
@@ -730,37 +709,6 @@
 	{:else}
 		<p>Extracting files...</p>
 	{/if}
-</Modal>
-
-<Modal
-	danger
-	bind:open={updatingModScriptsWarningOpen}
-	modalHeading="Mod now contains scripts"
-	primaryButtonText="I'm sure"
-	secondaryButtonText="Cancel"
-	shouldSubmitOnEnter={false}
-	on:click:button--secondary={() => {
-		updatingMod = null
-		updatingModScriptsWarningOpen = false
-	}}
-	on:click:button--primary={() => {
-		window.fs.removeSync(getModFolder(updatingMod.id))
-
-		window.fs.copySync("./staging", "../Mods")
-
-		window.fs.removeSync("./staging")
-		window.fs.removeSync("./tempArchive")
-
-		updatingMod = null
-
-		window.location.reload()
-	}}
->
-	<p>
-		The mod you're updating has added scripts; that means it is able to execute its own (external to the framework) code whenever you apply your mods. Scripts can do cool things and make a lot of
-		mods possible, but it's possible for them to cause problems, or even install malware (though the framework tries its best to avoid this). Make sure you trust whoever developed this mod, and
-		wherever you downloaded it from. Are you sure you want to add this mod?
-	</p>
 </Modal>
 
 <style>

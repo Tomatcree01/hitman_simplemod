@@ -496,9 +496,7 @@
 					"$ref": "#/definitions/FullRef"
 				},
 				{
-					"type": "string",
-					"minLength":16,
-					"maxLength":16
+					"type": "string"
 				},
 				{
 					"type": "null"

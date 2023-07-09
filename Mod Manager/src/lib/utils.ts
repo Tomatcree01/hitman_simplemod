@@ -14,7 +14,7 @@ import memoize from "lodash.memoize"
 import merge from "lodash.mergewith"
 import semver from "semver"
 
-export const FrameworkVersion = "2.29.0"
+export const FrameworkVersion = "2.30.3"
 
 const validateManifest = new Ajv({ strict: false }).compile(manifestSchema)
 
@@ -462,10 +462,12 @@ export function validateModFolder(modFolder: string): [boolean, string] {
 
 				switch (file.split(".").slice(1).join(".")) {
 					case "entity.json":
-						if (!validateEntity(fileContents)) return [false, `Invalid file ${file} due to non-matching schema: ${new Ajv({ strict: false }).errorsText(validateEntity.errors)}`]
+						if (fileContents.quickEntityVersion === 3.1 && !validateEntity(fileContents))
+							return [false, `Invalid file ${file} due to non-matching schema: ${new Ajv({ strict: false }).errorsText(validateEntity.errors)}`]
 						break
 					case "entity.patch.json":
-						if (!validateEntityPatch(fileContents)) return [false, `Invalid file ${file} due to non-matching schema: ${new Ajv({ strict: false }).errorsText(validateEntityPatch.errors)}`]
+						if (fileContents.patchVersion === 6 && !validateEntityPatch(fileContents))
+							return [false, `Invalid file ${file} due to non-matching schema: ${new Ajv({ strict: false }).errorsText(validateEntityPatch.errors)}`]
 						break
 					case "repository.json":
 						if (!validateRepository(fileContents)) return [false, `Invalid file ${file} due to non-matching schema: ${new Ajv({ strict: false }).errorsText(validateRepository.errors)}`]

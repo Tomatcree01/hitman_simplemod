@@ -1,3 +1,4 @@
+import * as LosslessJSON from "lossless-json"
 import * as rfc6902 from "rfc6902"
 import * as rust_utils from "./smf-rust"
 import * as ts from "./typescript"
@@ -6,7 +7,7 @@ import type { DeployInstruction, HMLanguageToolsLOCR, Manifest, ManifestOptionDa
 import { ModuleKind, ScriptTarget } from "typescript"
 import { compileExpression, useDotAccessOperatorAndOptionalChaining } from "filtrex"
 import { config, logger, rpkgInstance } from "./core-singleton"
-import { copyFromCache, copyToCache, extractOrCopyToTemp, fastParse, getModScript, getQuickEntityFromPatchVersion, getQuickEntityFromVersion, hexflip, normaliseToHash, stringify } from "./utils"
+import { copyFromCache, copyToCache, extractOrCopyToTemp, getQuickEntityFromPatchVersion, getQuickEntityFromVersion, hexflip, normaliseToHash } from "./utils"
 
 import { OptionType } from "./types"
 import Piscina from "piscina"
@@ -143,9 +144,7 @@ export default async function deploy(
 			// Find mod with ID in Mods folder, set the current mod to that folder
 			const foundMod = fs
 				.readdirSync(path.join(process.cwd(), "Mods"))
-				.find(
-					(a) => fs.existsSync(path.join(process.cwd(), "Mods", a, "manifest.json")) && json5.parse(fs.readFileSync(path.join(process.cwd(), "Mods", a, "manifest.json"), "utf8")).id === mod
-				)
+				.find((a) => fs.existsSync(path.join(process.cwd(), "Mods", a, "manifest.json")) && json5.parse(fs.readFileSync(path.join(process.cwd(), "Mods", a, "manifest.json"), "utf8")).id === mod)
 
 			if (!foundMod) {
 				await logger.error(`Could not resolve mod ${mod} to its folder in Mods!`)
@@ -242,11 +241,7 @@ export default async function deploy(
 							}))
 				)) {
 					for (const contentFolder of option.contentFolders || []) {
-						if (
-							contentFolder?.length &&
-							fs.existsSync(path.join(process.cwd(), "Mods", mod, contentFolder)) &&
-							fs.readdirSync(path.join(process.cwd(), "Mods", mod, contentFolder)).length
-						) {
+						if (contentFolder?.length && fs.existsSync(path.join(process.cwd(), "Mods", mod, contentFolder)) && fs.readdirSync(path.join(process.cwd(), "Mods", mod, contentFolder)).length) {
 							contentFolders.push(contentFolder)
 						}
 					}
@@ -353,7 +348,6 @@ export default async function deploy(
 				id: manifest.id,
 				name: manifest.name,
 				cacheFolder: manifest.id,
-				modRoot: path.join(process.cwd(), "Mods", mod),
 				manifestSources: {
 					localisation: manifest.localisation,
 					localisationOverrides: manifest.localisationOverrides,
@@ -380,7 +374,7 @@ export default async function deploy(
 				configureSentryScope(sentryScriptsTransaction)
 
 				for (const files of deployInstruction.manifestSources.scripts) {
-					await ts.compile(
+					ts.compile(
 						files.map((a) => path.join(process.cwd(), "Mods", mod, a)),
 						{
 							esModuleInterop: true,
@@ -392,9 +386,12 @@ export default async function deploy(
 						path.join(process.cwd(), "Mods", mod)
 					)
 
-					const modScript = (await getModScript(
-						path.join(process.cwd(), "compiled", path.relative(path.join(process.cwd(), "Mods", mod), path.join(process.cwd(), "Mods", mod, files[0].replace(".ts", ".js"))))
-					)) as ModScript
+					// eslint-disable-next-line @typescript-eslint/no-var-requires
+					const modScript = (await require(path.join(
+						process.cwd(),
+						"compiled",
+						path.relative(path.join(process.cwd(), "Mods", mod), path.join(process.cwd(), "Mods", mod, files[0].replace(".ts", ".js")))
+					))) as ModScript
 
 					fs.ensureDirSync(path.join(process.cwd(), "scriptTempFolder"))
 
@@ -402,6 +399,7 @@ export default async function deploy(
 						{
 							config,
 							deployInstruction,
+							modRoot: path.join(process.cwd(), "Mods", mod),
 							tempFolder: path.join(process.cwd(), "scriptTempFolder")
 						},
 						{
@@ -416,6 +414,7 @@ export default async function deploy(
 								}
 							},
 							utils: {
+								execCommand,
 								extractOrCopyToTemp,
 								getQuickEntityFromVersion,
 								getQuickEntityFromPatchVersion,
@@ -469,8 +468,8 @@ export default async function deploy(
 			for (const files of instruction.manifestSources.scripts) {
 				await logger.verbose(`Executing script: ${files[0]}`)
 
-				await ts.compile(
-					files.map((a) => path.join(instruction.modRoot, a)),
+				ts.compile(
+					files.map((a) => path.join(process.cwd(), "Mods", instruction.cacheFolder, a)),
 					{
 						esModuleInterop: true,
 						allowJs: true,
@@ -478,12 +477,15 @@ export default async function deploy(
 						module: ModuleKind.CommonJS,
 						resolveJsonModule: true
 					},
-					path.join(instruction.modRoot)
+					path.join(process.cwd(), "Mods", instruction.cacheFolder)
 				)
 
-				const modScript = (await getModScript(
-					path.join(process.cwd(), "compiled", path.relative(path.join(instruction.modRoot), path.join(instruction.modRoot, files[0].replace(".ts", ".js"))))
-				)) as ModScript
+				// eslint-disable-next-line @typescript-eslint/no-var-requires
+				const modScript = (await require(path.join(
+					process.cwd(),
+					"compiled",
+					path.relative(path.join(process.cwd(), "Mods", instruction.cacheFolder), path.join(process.cwd(), "Mods", instruction.cacheFolder, files[0].replace(".ts", ".js")))
+				))) as ModScript
 
 				fs.ensureDirSync(path.join(process.cwd(), "scriptTempFolder"))
 
@@ -491,6 +493,7 @@ export default async function deploy(
 					{
 						config,
 						deployInstruction: instruction,
+						modRoot: path.join(process.cwd(), "Mods", instruction.cacheFolder),
 						tempFolder: path.join(process.cwd(), "scriptTempFolder")
 					},
 					{
@@ -499,12 +502,11 @@ export default async function deploy(
 							getRPKGOfHash,
 							async extractFileFromRPKG(hash: string, rpkg: string) {
 								await logger.verbose(`Extracting ${hash} from ${rpkg}`)
-								await rpkgInstance.callFunction(
-									`-extract_from_rpkg "${path.join(config.runtimePath, `${rpkg}.rpkg`)}" -filter "${hash}" -output_path ${path.join(process.cwd(), "scriptTempFolder")}`
-								)
+								await rpkgInstance.callFunction(`-extract_from_rpkg "${path.join(config.runtimePath, `${rpkg}.rpkg`)}" -filter "${hash}" -output_path ${path.join(process.cwd(), "scriptTempFolder")}`)
 							}
 						},
 						utils: {
+							execCommand,
 							extractOrCopyToTemp,
 							getQuickEntityFromVersion,
 							getQuickEntityFromPatchVersion,
@@ -587,10 +589,7 @@ export default async function deploy(
 				} else {
 					fs.ensureDirSync(path.join(process.cwd(), "temp2", contractsORESChunk, "ORES"))
 					fs.copyFileSync(path.join(process.cwd(), "staging", "chunk0", "002B07020D21D727.ORES"), path.join(process.cwd(), "temp2", contractsORESChunk, "ORES", "002B07020D21D727.ORES")) // Use the staging one (for mod compat - one mod can extract, patch and build, then the next can patch that one instead)
-					fs.copyFileSync(
-						path.join(process.cwd(), "staging", "chunk0", "002B07020D21D727.ORES.meta"),
-						path.join(process.cwd(), "temp2", contractsORESChunk, "ORES", "002B07020D21D727.ORES.meta")
-					)
+					fs.copyFileSync(path.join(process.cwd(), "staging", "chunk0", "002B07020D21D727.ORES.meta"), path.join(process.cwd(), "temp2", contractsORESChunk, "ORES", "002B07020D21D727.ORES.meta"))
 				}
 
 				execCommand(`"Third-Party\\OREStool.exe" "${path.join(process.cwd(), "temp2", contractsORESChunk, "ORES", "002B07020D21D727.ORES")}"`)
@@ -673,11 +672,11 @@ export default async function deploy(
 				case "entity.json": {
 					await logger.debug(`Converting entity ${contentIdentifier}`)
 
-					entityContent = fastParse(content.source === "disk" ? fs.readFileSync(content.path, "utf8") : await content.content.text())
+					entityContent = LosslessJSON.parse(String(content.source === "disk" ? fs.readFileSync(content.path) : await content.content.text()))
 
 					try {
-						if (!getQuickEntityFromVersion(entityContent.quickEntityVersion.toString())) {
-							await logger.error(`Could not find matching QuickEntity version for ${entityContent.quickEntityVersion.toString()}!`)
+						if (!getQuickEntityFromVersion(entityContent.quickEntityVersion.value)) {
+							await logger.error(`Could not find matching QuickEntity version for ${Number(entityContent.quickEntityVersion.value)}!`)
 						}
 					} catch {
 						await logger.error("Improper QuickEntity JSON; couldn't find the version!")
@@ -685,6 +684,112 @@ export default async function deploy(
 
 					RPKGHashCache[entityContent.tempHash] = [`chunk${content.chunk}`, true]
 					RPKGHashCache[entityContent.tbluHash] = [`chunk${content.chunk}`, true]
+
+					if (+entityContent.quickEntityVersion.value < 3) {
+						if (content.source === "disk") {
+							await logger.info(`Optimising entity.json file ${contentIdentifier}`)
+
+							fs.ensureDirSync(path.join(process.cwd(), "qn-update"))
+
+							const comments = Object.entries(entityContent.entities).filter((a) => (a[1] as { type: string | undefined }).type === "comment")
+
+							await getQuickEntityFromVersion(entityContent.quickEntityVersion.value).generate(
+								"HM3",
+								content.path,
+								path.join(process.cwd(), "qn-update", "temp.json"),
+								path.join(process.cwd(), "qn-update", "temp.meta.json"),
+								path.join(process.cwd(), "qn-update", "tblu.json"),
+								path.join(process.cwd(), "qn-update", "tblu.meta.json")
+							)
+
+							await getQuickEntityFromVersion("3.1").convert(
+								"HM3",
+								path.join(process.cwd(), "qn-update", "temp.json"),
+								path.join(process.cwd(), "qn-update", "temp.meta.json"),
+								path.join(process.cwd(), "qn-update", "tblu.json"),
+								path.join(process.cwd(), "qn-update", "tblu.meta.json"),
+								content.path
+							)
+
+							fs.writeFileSync(
+								content.path,
+								LosslessJSON.stringify(
+									Object.assign(LosslessJSON.parse(fs.readFileSync(content.path, "utf8")), {
+										comments: comments.map((a: [string, { parent: string; name: string; text: string }]) => {
+											return {
+												parent: a[1].parent,
+												name: a[1].name,
+												text: a[1].text
+											}
+										})
+									})
+								)
+							)
+
+							fs.removeSync(path.join(process.cwd(), "qn-update"))
+
+							entityContent = LosslessJSON.parse(fs.readFileSync(content.path, "utf8"))
+
+							if (!config.developerMode) {
+								await logger.warn(
+									`Optimised an entity.json file from ${instruction.id}. This should improve the speed of deploys from now on. Consider contacting the mod developer to run this process on their end rather than the user's computer.`
+								)
+							} else {
+								await logger.warn(`Automatically upgraded an entity.json file from ${instruction.id} to the latest QuickEntity version.`)
+							}
+						} else {
+							await logger.warn(`Mod ${instruction.id} emits a virtual QuickEntity JSON with a version less than 3.1 using scripting. This should not be the case.`)
+						}
+					} else if (+entityContent.quickEntityVersion.value < 3.1) {
+						if (content.source === "disk") {
+							await logger.info(`Optimising entity.json file ${contentIdentifier}`)
+
+							fs.ensureDirSync(path.join(process.cwd(), "qn-update"))
+
+							const comments = entityContent.comments
+
+							await getQuickEntityFromVersion(entityContent.quickEntityVersion.value).generate(
+								"HM3",
+								content.path,
+								path.join(process.cwd(), "qn-update", "temp.json"),
+								path.join(process.cwd(), "qn-update", "temp.meta.json"),
+								path.join(process.cwd(), "qn-update", "tblu.json"),
+								path.join(process.cwd(), "qn-update", "tblu.meta.json")
+							)
+
+							await getQuickEntityFromVersion("3.1").convert(
+								"HM3",
+								path.join(process.cwd(), "qn-update", "temp.json"),
+								path.join(process.cwd(), "qn-update", "temp.meta.json"),
+								path.join(process.cwd(), "qn-update", "tblu.json"),
+								path.join(process.cwd(), "qn-update", "tblu.meta.json"),
+								content.path
+							)
+
+							fs.writeFileSync(
+								content.path,
+								LosslessJSON.stringify(
+									Object.assign(LosslessJSON.parse(fs.readFileSync(content.path, "utf8")), {
+										comments
+									})
+								)
+							)
+
+							fs.removeSync(path.join(process.cwd(), "qn-update"))
+
+							entityContent = LosslessJSON.parse(fs.readFileSync(content.path, "utf8"))
+
+							if (!config.developerMode) {
+								await logger.warn(
+									`Optimised an entity.json file from ${instruction.id}. This should improve the speed of deploys from now on. Consider contacting the mod developer to run this process on their end rather than the user's computer.`
+								)
+							} else {
+								await logger.warn(`Automatically upgraded an entity.json file from ${instruction.id} to the latest QuickEntity version.`)
+							}
+						} else {
+							await logger.warn(`Mod ${instruction.id} emits a virtual QuickEntity JSON with a version less than 3.1 using scripting. This should not be the case.`)
+						}
+					}
 
 					await logger.verbose("Cache check")
 					if (
@@ -708,7 +813,8 @@ export default async function deploy(
 						try {
 							await logger.verbose("QN generate")
 
-							await getQuickEntityFromVersion(entityContent.quickEntityVersion.toString()).generate(
+							await getQuickEntityFromVersion(entityContent.quickEntityVersion.value).generate(
+								"HM3",
 								contentPath,
 								path.join(process.cwd(), "temp", "temp.TEMP.json"),
 								path.join(process.cwd(), "temp", `${entityContent.tempHash}.TEMP.meta.json`),
@@ -741,18 +847,12 @@ export default async function deploy(
 						await callRPKGFunction(`-json_to_hash_meta "${path.join(process.cwd(), "temp", `${entityContent.tbluHash}.TBLU.meta.json`)}"`)
 						// Generate the binary files from the RT json
 
-						fs.copyFileSync(
-							path.join(process.cwd(), "temp", `${entityContent.tempHash}.TEMP`),
-							path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${entityContent.tempHash}.TEMP`)
-						)
+						fs.copyFileSync(path.join(process.cwd(), "temp", `${entityContent.tempHash}.TEMP`), path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${entityContent.tempHash}.TEMP`))
 						fs.copyFileSync(
 							path.join(process.cwd(), "temp", `${entityContent.tempHash}.TEMP.meta`),
 							path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${entityContent.tempHash}.TEMP.meta`)
 						)
-						fs.copyFileSync(
-							path.join(process.cwd(), "temp", `${entityContent.tbluHash}.TBLU`),
-							path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${entityContent.tbluHash}.TBLU`)
-						)
+						fs.copyFileSync(path.join(process.cwd(), "temp", `${entityContent.tbluHash}.TBLU`), path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${entityContent.tbluHash}.TBLU`))
 						fs.copyFileSync(
 							path.join(process.cwd(), "temp", `${entityContent.tbluHash}.TBLU.meta`),
 							path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${entityContent.tbluHash}.TBLU.meta`)
@@ -772,11 +872,137 @@ export default async function deploy(
 				case "entity.patch.json": {
 					await logger.debug(`Preparing to apply patch ${contentIdentifier}`)
 
-					entityContent = fastParse(content.source === "disk" ? fs.readFileSync(content.path, "utf8") : await content.content.text())
+					entityContent = content.source === "disk" ? LosslessJSON.parse(fs.readFileSync(content.path, "utf8")) : LosslessJSON.parse(await content.content.text())
 					entityContent.path = contentIdentifier
 
+					if (+entityContent.patchVersion.value < 6) {
+						if (content.source === "disk") {
+							await logger.info(`Optimising entity.patch.json file ${contentIdentifier}`)
+
+							const tempRPKG = await rpkgInstance.getRPKGOfHash(entityContent.tempHash)
+							const tbluRPKG = await rpkgInstance.getRPKGOfHash(entityContent.tbluHash)
+
+							fs.ensureDirSync("qn-update")
+
+							await callRPKGFunction(`-extract_from_rpkg "${path.join(config.runtimePath, `${tempRPKG}.rpkg`)}" -filter "${entityContent.tempHash}" -output_path "qn-update"`)
+							await callRPKGFunction(`-extract_from_rpkg "${path.join(config.runtimePath, `${tbluRPKG}.rpkg`)}" -filter "${entityContent.tbluHash}" -output_path "qn-update"`)
+
+							await Promise.all([
+								execCommand(
+									`"${path.join(process.cwd(), "Third-Party", "ResourceTool.exe")}" HM3 convert TEMP "${path.join(
+										process.cwd(),
+										"qn-update",
+										tempRPKG,
+										"TEMP",
+										`${entityContent.tempHash}.TEMP`
+									)}" "${path.join(process.cwd(), "qn-update", tempRPKG, "TEMP", `${entityContent.tempHash}.TEMP`)}.json" --simple`
+								),
+								execCommand(
+									`"${path.join(process.cwd(), "Third-Party", "ResourceTool.exe")}" HM3 convert TBLU "${path.join(
+										process.cwd(),
+										"qn-update",
+										tbluRPKG,
+										"TBLU",
+										`${entityContent.tbluHash}.TBLU`
+									)}" "${path.join(process.cwd(), "qn-update", tbluRPKG, "TBLU", `${entityContent.tbluHash}.TBLU`)}.json" --simple`
+								)
+							])
+
+							await callRPKGFunction(`-hash_meta_to_json "${path.join(process.cwd(), "qn-update", tempRPKG, "TEMP", `${entityContent.tempHash}.TEMP.meta`)}"`)
+							await callRPKGFunction(`-hash_meta_to_json "${path.join(process.cwd(), "qn-update", tbluRPKG, "TBLU", `${entityContent.tbluHash}.TBLU.meta`)}"`)
+
+							if (+entityContent.patchVersion.value < 3) {
+								await getQuickEntityFromPatchVersion(entityContent.patchVersion.value).convert(
+									"HM3",
+									"ids",
+									path.join(process.cwd(), "qn-update", tempRPKG, "TEMP", `${entityContent.tempHash}.TEMP.json`),
+									path.join(process.cwd(), "qn-update", tempRPKG, "TEMP", `${entityContent.tempHash}.TEMP.meta.JSON`),
+									path.join(process.cwd(), "qn-update", tbluRPKG, "TBLU", `${entityContent.tbluHash}.TBLU.json`),
+									path.join(process.cwd(), "qn-update", tbluRPKG, "TBLU", `${entityContent.tbluHash}.TBLU.meta.JSON`),
+									// @ts-expect-error Two different versions of the same function; TypeScript doesn't have a way of overloading a "type-only" function
+									path.join(process.cwd(), "qn-update", "QuickEntityJSON.json")
+								) // Generate the QN json from the RT files
+							} else {
+								await getQuickEntityFromPatchVersion(entityContent.patchVersion.value).convert(
+									"HM3",
+									path.join(process.cwd(), "qn-update", tempRPKG, "TEMP", `${entityContent.tempHash}.TEMP.json`),
+									path.join(process.cwd(), "qn-update", tempRPKG, "TEMP", `${entityContent.tempHash}.TEMP.meta.JSON`),
+									path.join(process.cwd(), "qn-update", tbluRPKG, "TBLU", `${entityContent.tbluHash}.TBLU.json`),
+									path.join(process.cwd(), "qn-update", tbluRPKG, "TBLU", `${entityContent.tbluHash}.TBLU.meta.JSON`),
+									path.join(process.cwd(), "qn-update", "QuickEntityJSON.json")
+								) // Generate the QN json from the RT files
+							}
+
+							fs.writeFileSync(path.join(process.cwd(), "qn-update", "patch.json"), LosslessJSON.stringify(entityContent))
+
+							await getQuickEntityFromPatchVersion(entityContent.patchVersion.value).applyPatchJSON(
+								path.join(process.cwd(), "qn-update", "QuickEntityJSON.json"),
+								path.join(process.cwd(), "qn-update", "patch.json"),
+								path.join(process.cwd(), "qn-update", "PatchedQuickEntityJSON.json")
+							) // Patch the QN json
+
+							await getQuickEntityFromPatchVersion(entityContent.patchVersion.value).generate(
+								"HM3",
+								path.join(process.cwd(), "qn-update", "QuickEntityJSON.json"),
+								path.join(process.cwd(), "qn-update", "temp.json"),
+								path.join(process.cwd(), "qn-update", "temp.meta.json"),
+								path.join(process.cwd(), "qn-update", "tblu.json"),
+								path.join(process.cwd(), "qn-update", "tblu.meta.json")
+							)
+
+							await getQuickEntityFromVersion("3.1").convert(
+								"HM3",
+								path.join(process.cwd(), "qn-update", "temp.json"),
+								path.join(process.cwd(), "qn-update", "temp.meta.json"),
+								path.join(process.cwd(), "qn-update", "tblu.json"),
+								path.join(process.cwd(), "qn-update", "tblu.meta.json"),
+								path.join(process.cwd(), "qn-update", "QuickEntityJSON-qn31.json")
+							)
+
+							await getQuickEntityFromPatchVersion(entityContent.patchVersion.value).generate(
+								"HM3",
+								path.join(process.cwd(), "qn-update", "PatchedQuickEntityJSON.json"),
+								path.join(process.cwd(), "qn-update", "temp.json"),
+								path.join(process.cwd(), "qn-update", "temp.meta.json"),
+								path.join(process.cwd(), "qn-update", "tblu.json"),
+								path.join(process.cwd(), "qn-update", "tblu.meta.json")
+							)
+
+							await getQuickEntityFromVersion("3.1").convert(
+								"HM3",
+								path.join(process.cwd(), "qn-update", "temp.json"),
+								path.join(process.cwd(), "qn-update", "temp.meta.json"),
+								path.join(process.cwd(), "qn-update", "tblu.json"),
+								path.join(process.cwd(), "qn-update", "tblu.meta.json"),
+								path.join(process.cwd(), "qn-update", "PatchedQuickEntityJSON-qn31.json")
+							)
+
+							// @ts-expect-error The method isn't defined on the interface but is defined in the actual shim
+							await getQuickEntityFromVersion("3.1").createPatchJSON(
+								path.join(process.cwd(), "qn-update", "QuickEntityJSON-qn31.json"),
+								path.join(process.cwd(), "qn-update", "PatchedQuickEntityJSON-qn31.json"),
+								content.path
+							)
+
+							fs.removeSync(path.join(process.cwd(), "qn-update"))
+
+							entityContent = LosslessJSON.parse(fs.readFileSync(content.path, "utf8"))
+							entityContent.path = contentIdentifier
+
+							if (!config.developerMode) {
+								await logger.warn(
+									`Optimised an entity.patch.json file from ${instruction.id}. This should improve the speed of deploys from now on. Consider contacting the mod developer to run this process on their end rather than the user's computer.`
+								)
+							} else {
+								await logger.warn(`Automatically upgraded an entity.patch.json file from ${instruction.id} to the latest QuickEntity version.`)
+							}
+						} else {
+							await logger.warn(`Mod ${instruction.id} emits a virtual QuickEntity patch JSON with a patch version less than 6 using scripting. This should not be the case.`)
+						}
+					}
+
 					if (entityPatches.some((a) => a.tempHash === entityContent.tempHash)) {
-						entityPatches.find((a) => a.tempHash === entityContent.tempHash)!.patches.push(stringify(entityContent))
+						entityPatches.find((a) => a.tempHash === entityContent.tempHash)!.patches.push(entityContent)
 					} else {
 						entityPatches.push({
 							tempHash: entityContent.tempHash,
@@ -784,7 +1010,7 @@ export default async function deploy(
 							tbluHash: entityContent.tbluHash,
 							tbluRPKG: await getRPKGOfHash(entityContent.tbluHash),
 							chunkFolder: `chunk${content.chunk}`,
-							patches: [stringify(entityContent)],
+							patches: [entityContent],
 							mod: instruction.cacheFolder
 						})
 					}
@@ -854,71 +1080,37 @@ export default async function deploy(
 
 						const repoToPatch = Object.fromEntries(repoContent.map((a: { [x: string]: unknown }) => [a["ID_"], a]))
 						deepMerge(repoToPatch, entityContent)
-						const repoToWrite = Object.entries(repoToPatch).map((a) => ({ ...a[1], ID_: a[1].ID_ || a[0] }))
+						const repoToWrite = Object.values(repoToPatch)
 
 						const editedItems = new Set(Object.keys(entityContent))
 
 						await callRPKGFunction(`-hash_meta_to_json "${path.join(process.cwd(), "temp", repoRPKG, "REPO", "00204D1AFD76AB13.REPO.meta")}"`)
 						const metaContent = JSON.parse(fs.readFileSync(path.join(process.cwd(), "temp", repoRPKG, "REPO", "00204D1AFD76AB13.REPO.meta.JSON"), "utf8"))
-
-						const repoDepends = new Set(metaContent["hash_reference_data"].map((a: { hash: string }) => a.hash))
-
 						for (const repoItem of repoToWrite) {
 							if (editedItems.has(repoItem.ID_)) {
 								if (repoItem.Runtime) {
-									const x = BigInt(repoItem.Runtime).toString(16).toUpperCase().padStart(16, "0")
-
-									if (!repoDepends.has(x)) {
+									if (!metaContent["hash_reference_data"].find((a: { hash: string }) => a.hash === parseInt(repoItem.Runtime).toString(16).toUpperCase())) {
 										metaContent["hash_reference_data"].push({
-											hash: x,
+											hash: parseInt(repoItem.Runtime).toString(16).toUpperCase(),
 											flag: "9F"
 										}) // Add Runtime of any items to REPO depends if not already there
-
-										repoDepends.add(x)
-									}
-								}
-
-								if (repoItem.AmmoImpactEffect) {
-									const x = BigInt(repoItem.AmmoImpactEffect).toString(16).toUpperCase().padStart(16, "0")
-
-									if (!repoDepends.has(x)) {
-										metaContent["hash_reference_data"].push({
-											hash: x,
-											flag: "9F"
-										}) // Add AmmoImpactEffect of any items to REPO depends if not already there
-
-										repoDepends.add(x)
-									}
-								}
-
-								if (repoItem.AmmoInFlightEffect) {
-									const x = BigInt(repoItem.AmmoInFlightEffect).toString(16).toUpperCase().padStart(16, "0")
-
-									if (!repoDepends.has(x)) {
-										metaContent["hash_reference_data"].push({
-											hash: x,
-											flag: "9F"
-										}) // Add AmmoInFlightEffect of any items to REPO depends if not already there
-
-										repoDepends.add(x)
 									}
 								}
 
 								if (repoItem.Image) {
-									const x = `00${md5(`[assembly:/_pro/online/default/cloudstorage/resources/${repoItem.Image}].pc_gfx`.toLowerCase()).slice(2, 16).toUpperCase()}`
-
-									if (!repoDepends.has(x)) {
+									if (
+										!metaContent["hash_reference_data"].find(
+											(a: { hash: string }) => a.hash === `00${md5(`[assembly:/_pro/online/default/cloudstorage/resources/${repoItem.Image}].pc_gfx`.toLowerCase()).slice(2, 16).toUpperCase()}`
+										)
+									) {
 										metaContent["hash_reference_data"].push({
-											hash: x,
+											hash: `00${md5(`[assembly:/_pro/online/default/cloudstorage/resources/${repoItem.Image}].pc_gfx`.toLowerCase()).slice(2, 16).toUpperCase()}`,
 											flag: "9F"
 										}) // Add Image of any items to REPO depends if not already there
-
-										repoDepends.add(x)
 									}
 								}
 							}
 						}
-
 						fs.writeFileSync(path.join(process.cwd(), "temp", repoRPKG, "REPO", "00204D1AFD76AB13.REPO.meta.JSON"), JSON.stringify(metaContent))
 						fs.rmSync(path.join(process.cwd(), "temp", repoRPKG, "REPO", "00204D1AFD76AB13.REPO.meta"))
 						await callRPKGFunction(`-json_to_hash_meta "${path.join(process.cwd(), "temp", repoRPKG, "REPO", "00204D1AFD76AB13.REPO.meta.JSON")}"`) // Add all runtimes to REPO depends
@@ -939,7 +1131,7 @@ export default async function deploy(
 				case "contract.json": {
 					await logger.debug(`Adding contract ${contentIdentifier}`)
 
-					entityContent = JSON.parse(content.source === "disk" ? fs.readFileSync(content.path, "utf8") : await content.content.text())
+					entityContent = content.source === "disk" ? LosslessJSON.parse(fs.readFileSync(content.path, "utf8")) : LosslessJSON.parse(await content.content.text())
 
 					if (entityContent.SMF) {
 						if (entityContent.SMF.destinations?.addToDestinations) {
@@ -969,7 +1161,7 @@ export default async function deploy(
 						contractHash = Object.entries(contractsORESContent).find((a) => a[1] === entityContent.Metadata.Id)![0]
 					}
 
-					fs.writeFileSync(path.join(process.cwd(), "staging", "chunk0", `${contractHash}.JSON`), JSON.stringify(entityContent)) // Write the actual contract to the staging directory
+					fs.writeFileSync(path.join(process.cwd(), "staging", "chunk0", `${contractHash}.JSON`), LosslessJSON.stringify(entityContent)) // Write the actual contract to the staging directory
 					break
 				}
 				case "JSON.patch.json": {
@@ -1410,10 +1602,7 @@ export default async function deploy(
 
 					// Copy LOCR files
 					fs.copyFileSync(path.join(process.cwd(), "temp", `chunk${content.chunk}`, `${hash}.RTLV`), path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${hash}.RTLV`))
-					fs.copyFileSync(
-						path.join(process.cwd(), "temp", `chunk${content.chunk}`, `${hash}.RTLV.meta.json`),
-						path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${hash}.RTLV.meta.json`)
-					)
+					fs.copyFileSync(path.join(process.cwd(), "temp", `chunk${content.chunk}`, `${hash}.RTLV.meta.json`), path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${hash}.RTLV.meta.json`))
 					break
 				}
 				case "locr.json": {
@@ -1456,10 +1645,7 @@ export default async function deploy(
 
 					// Copy LOCR files
 					fs.copyFileSync(path.join(process.cwd(), "temp", `chunk${content.chunk}`, `${hash}.LOCR`), path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${hash}.LOCR`))
-					fs.copyFileSync(
-						path.join(process.cwd(), "temp", `chunk${content.chunk}`, `${hash}.LOCR.meta.json`),
-						path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${hash}.LOCR.meta.json`)
-					)
+					fs.copyFileSync(path.join(process.cwd(), "temp", `chunk${content.chunk}`, `${hash}.LOCR.meta.json`), path.join(process.cwd(), "staging", `chunk${content.chunk}`, `${hash}.LOCR.meta.json`))
 					break
 				}
 				default: // Copy the file to the staging directory; we don't cache these for obvious reasons
@@ -1613,8 +1799,7 @@ export default async function deploy(
 				oresContent[blobHash] = blob.blobPath // Add the blob to the ORES
 
 				lastServerSideStates["blobs"] ??= {}
-				lastServerSideStates["blobs"][blob.blobPath] =
-					blob.source === "disk" ? fs.readFileSync(blob.filePath).toString("base64") : Buffer.from(await blob.content.arrayBuffer()).toString("base64")
+				lastServerSideStates["blobs"][blob.blobPath] = blob.source === "disk" ? fs.readFileSync(blob.filePath).toString("base64") : Buffer.from(await blob.content.arrayBuffer()).toString("base64")
 
 				if (!metaContent["hash_reference_data"].find((a: { hash: unknown }) => a.hash === blobHash)) {
 					metaContent["hash_reference_data"].push({
@@ -1805,7 +1990,14 @@ export default async function deploy(
 				) {
 					fs.writeFileSync(
 						path.join(process.cwd(), "temp", "chunk0", `${lineHash}.LINE`),
-						Buffer.from(`${hexflip(crc32(instruction.manifestSources.localisedLines[lineHash].toUpperCase()).toString(16).padStart(8, "0"))}00`, "hex")
+						Buffer.from(
+							`${hexflip(
+								crc32(instruction.manifestSources.localisedLines[lineHash].toUpperCase())
+									.toString(16)
+									.padStart(8, "0")
+							)}00`,
+							"hex"
+						)
 					) // Create the LINE file
 
 					fs.writeFileSync(
@@ -1853,8 +2045,8 @@ export default async function deploy(
 			for (const files of instruction.manifestSources.scripts) {
 				await logger.verbose(`Executing script: ${files[0]}`)
 
-				await ts.compile(
-					files.map((a) => path.join(instruction.modRoot, a)),
+				ts.compile(
+					files.map((a) => path.join(process.cwd(), "Mods", instruction.cacheFolder, a)),
 					{
 						esModuleInterop: true,
 						allowJs: true,
@@ -1862,12 +2054,15 @@ export default async function deploy(
 						module: ModuleKind.CommonJS,
 						resolveJsonModule: true
 					},
-					path.join(instruction.modRoot)
+					path.join(process.cwd(), "Mods", instruction.cacheFolder)
 				)
 
-				const modScript = (await getModScript(
-					path.join(process.cwd(), "compiled", path.relative(path.join(instruction.modRoot), path.join(instruction.modRoot, files[0].replace(".ts", ".js"))))
-				)) as ModScript
+				// eslint-disable-next-line @typescript-eslint/no-var-requires
+				const modScript = (await require(path.join(
+					process.cwd(),
+					"compiled",
+					path.relative(path.join(process.cwd(), "Mods", instruction.cacheFolder), path.join(process.cwd(), "Mods", instruction.cacheFolder, files[0].replace(".ts", ".js")))
+				))) as ModScript
 
 				fs.ensureDirSync(path.join(process.cwd(), "scriptTempFolder"))
 
@@ -1875,6 +2070,7 @@ export default async function deploy(
 					{
 						config,
 						deployInstruction: instruction,
+						modRoot: path.join(process.cwd(), "Mods", instruction.cacheFolder),
 						tempFolder: path.join(process.cwd(), "scriptTempFolder")
 					},
 					{
@@ -1883,12 +2079,11 @@ export default async function deploy(
 							getRPKGOfHash,
 							async extractFileFromRPKG(hash: string, rpkg: string) {
 								await logger.verbose(`Extracting ${hash} from ${rpkg}`)
-								await rpkgInstance.callFunction(
-									`-extract_from_rpkg "${path.join(config.runtimePath, `${rpkg}.rpkg`)}" -filter "${hash}" -output_path ${path.join(process.cwd(), "scriptTempFolder")}`
-								)
+								await rpkgInstance.callFunction(`-extract_from_rpkg "${path.join(config.runtimePath, `${rpkg}.rpkg`)}" -filter "${hash}" -output_path ${path.join(process.cwd(), "scriptTempFolder")}`)
 							}
 						},
 						utils: {
+							execCommand,
 							extractOrCopyToTemp,
 							getQuickEntityFromVersion,
 							getQuickEntityFromPatchVersion,
